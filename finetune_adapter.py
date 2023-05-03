@@ -12,6 +12,7 @@ Note: If you run into a CUDA error "Expected is_sm80 to be true, but got false",
 `torch.backends.cuda.enable_flash_sdp(False)` in the script below (see https://github.com/Lightning-AI/lit-llama/issues/101).
 """
 import os
+# os.environ["CUDA_VISIBLE_DEVICES"]="3"
 import time
 from pathlib import Path
 import shutil
@@ -23,26 +24,31 @@ import torch
 from generate import generate
 from lit_llama.adapter import LLaMA, LLaMAConfig, mark_only_adapter_as_trainable, adapter_state_from_state_dict
 from lit_llama.tokenizer import Tokenizer
-from scripts.prepare_alpaca import generate_prompt
+from scripts.prepare_ko_doctor import generate_prompt
 from lightning.fabric.strategies import DeepSpeedStrategy
 
-
-eval_interval = 600
-save_interval = 1000
-eval_iters = 100
+eval_interval = 100# 600
+eval_iters = 1
 log_interval = 1
-devices = 1
+devices = 4
+max_seq_length = 512  # see scripts/prepare_alpaca.py
+VALIDATE_EXAMPLE = "제가 어제부터 침을 삼킬때 통증이 심하고, 콧물도 나요. 열도 많이 나요."
 
+if devices > 1:
+    precision ="bf16-mixed" #"32-true" #'16-mixed' #
+else:
+    precision = "bf16-true"
 # Hyperparameters
 learning_rate = 9e-3
-batch_size = 64 / devices
-micro_batch_size = 4
+batch_size = 64 // devices
+micro_batch_size = 5
 gradient_accumulation_steps = batch_size // micro_batch_size
-epoch_size = 50000  # train dataset size
-num_epochs = 5
-max_iters = num_epochs * epoch_size // devices
+epoch_size = 2000000 # 50000  # train dataset size
+num_epochs = 1
+max_iters = num_epochs * epoch_size // micro_batch_size
+print('max_iters:', max_iters)
+save_interval = 100# max_iters//10
 weight_decay = 0.02
-max_seq_length = 256  # see scripts/prepare_alpaca.py
 warmup_steps = epoch_size * 2 // micro_batch_size // devices  # 2 epochs
 
 ds_config = {
@@ -53,16 +59,16 @@ ds_config = {
 
 
 def main(
-    data_dir: str = "data/alpaca", 
+    data_dir: str = "data/ko_doctor", 
     pretrained_path: str = "checkpoints/lit-llama/7B/lit-llama.pth",
-    out_dir: str = "out/adapter/alpaca",
+    out_dir: str = "out/adapter/ko_doctor",
 ):
-
     fabric = L.Fabric(
         accelerator="cuda", 
         devices=devices, 
+        # strategy="auto",#strategy, #(DeepSpeedStrategy(config=ds_config) if devices > 1 else "auto"), 
         strategy=(DeepSpeedStrategy(config=ds_config) if devices > 1 else "auto"), 
-        precision="bf16-true",
+        precision= precision, #"bf16-true",
     )
     fabric.launch()
     fabric.seed_everything(1337 + fabric.global_rank)
@@ -70,7 +76,7 @@ def main(
     if fabric.global_rank == 0:
         os.makedirs(out_dir, exist_ok=True)
 
-    train_data, val_data = load_datasets(data_dir=data_dir)
+    train_data, val_data = load_datasets(data_dir=data_dir,max_seq_length =max_seq_length )
 
     config = LLaMAConfig(block_size=max_seq_length)
 
@@ -80,11 +86,19 @@ def main(
             " Please follow the instructions in the README to download them."
         )
     checkpoint = torch.load(pretrained_path)
+    
+    if os.path.isfile(out_dir + "/lit-llama-adapter-finetuned.pth"):
+        adapter_checkpoint = torch.load(out_dir + "/lit-llama-adapter-finetuned.pth")
+        print('load checkpoint')
 
     with fabric.init_module():
         model = LLaMA(config)
         # strict=False because missing keys due to adapter weights not containted in state dict
         model.load_state_dict(checkpoint, strict=False)
+        if os.path.isfile(out_dir + "/lit-llama-adapter-finetuned.pth"):
+            model.load_state_dict(adapter_checkpoint, strict=False)
+        
+
 
     mark_only_adapter_as_trainable(model)
 
@@ -136,17 +150,17 @@ def train(
                 
             if step_count % eval_interval == 0:
                 val_loss = validate(fabric, model, val_data)
-                fabric.print(f"step {iter_num}: val loss {val_loss:.4f}")
+                fabric.print(f"step {iter_num}/{max_iters}: val loss {val_loss:.4f}")
                 fabric.barrier()
 
             if step_count % save_interval == 0:
-                print(f"Saving adapter weights to {out_dir}")
+                fabric.print(f"Saving adapter weights to {out_dir}")
                 # TODO: Provide a function/script to merge the adapter weights with pretrained weights
                 save_model_checkpoint(fabric, model, os.path.join(out_dir, f"iter-{iter_num:06d}.pth"))
 
         dt = time.time() - t0
         if iter_num % log_interval == 0:
-            fabric.print(f"iter {iter_num}: loss {loss.item():.4f}, time: {dt*1000:.2f}ms")
+            fabric.print(f"iter {iter_num}/{max_iters}: loss {loss.item():.4f}, time: {dt*1000:.2f}ms")
 
 
 def generate_response(model, instruction, input=""):
@@ -179,7 +193,7 @@ def validate(fabric: L.Fabric, model: torch.nn.Module, val_data: np.ndarray) -> 
     val_loss = losses.mean()
 
     # produce an example:
-    instruction = "Recommend a movie for me to watch during the weekend and explain the reason."
+    instruction = VALIDATE_EXAMPLE
     output = generate_response(model, instruction)
     fabric.print(instruction)
     fabric.print(output)
@@ -214,9 +228,9 @@ def get_batch(fabric: L.Fabric, data: list):
     return x, y
 
 
-def load_datasets(data_dir):
-    train_data = torch.load(os.path.join(data_dir, "train.pt"))
-    val_data = torch.load(os.path.join(data_dir, "test.pt"))
+def load_datasets(data_dir, max_seq_length):
+    train_data = torch.load(os.path.join(data_dir, f"train_{max_seq_length}.pt"))
+    val_data = torch.load(os.path.join(data_dir, f"test_{max_seq_length}.pt"))
     return train_data, val_data
 
 

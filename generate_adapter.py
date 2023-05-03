@@ -45,7 +45,7 @@ def main(
             samples.
     """
     if not adapter_path:
-        adapter_path = Path("out/adapter/alpaca/lit-llama-adapter-finetuned.pth")
+        adapter_path = Path("out/adapter/ko_doctor/lit-llama-adapter-finetuned.pth")
     if not pretrained_path:
         pretrained_path = Path(f"./checkpoints/lit-llama/7B/lit-llama.pth")
     if not tokenizer_path:
@@ -98,7 +98,7 @@ def main(
 
     output = tokenizer.decode(output)
     output = output.split("### Response:")[1].strip()
-    print(output)
+    print('output :', output)
 
     print(f"\n\nTime for inference: {t:.02f} sec total, {max_new_tokens / t:.02f} tokens/sec", file=sys.stderr)
     if fabric.device.type == "cuda":
