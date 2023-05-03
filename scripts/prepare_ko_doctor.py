@@ -44,7 +44,7 @@ def prepare(
     destination_path: Path = Path("data/ko_doctor"), 
     tokenizer_path: Path = Path("checkpoints/lit-llama/tokenizer.model"),
     test_split_size: int = 200,
-    max_seq_length: int = 1024,
+    max_seq_length: int = 256,
     seed: int = 42,
     mask_inputs: bool = False,  # as in alpaca-lora
     data_file_name: str = DATA_FILE_NAME1

@@ -12,7 +12,7 @@ Note: If you run into a CUDA error "Expected is_sm80 to be true, but got false",
 `torch.backends.cuda.enable_flash_sdp(False)` in the script below (see https://github.com/Lightning-AI/lit-llama/issues/101).
 """
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"]="3"
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
 import time
 from pathlib import Path
 import shutil
@@ -27,10 +27,10 @@ from lit_llama.tokenizer import Tokenizer
 from scripts.prepare_ko_doctor import generate_prompt
 from lightning.fabric.strategies import DeepSpeedStrategy
 
-eval_interval = 100# 600
+eval_interval = 1# 600
 eval_iters = 1
 log_interval = 1
-devices = 4
+devices = 1 # 4
 max_seq_length = 512  # see scripts/prepare_alpaca.py
 VALIDATE_EXAMPLE = "제가 어제부터 침을 삼킬때 통증이 심하고, 콧물도 나요. 열도 많이 나요."
 
@@ -41,7 +41,7 @@ else:
 # Hyperparameters
 learning_rate = 9e-3
 batch_size = 64 // devices
-micro_batch_size = 5
+micro_batch_size = 4
 gradient_accumulation_steps = batch_size // micro_batch_size
 epoch_size = 2000000 # 50000  # train dataset size
 num_epochs = 1
